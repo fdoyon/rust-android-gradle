@@ -15,29 +15,30 @@ open class GenerateToolchainsTask : DefaultTask() {
     fun generateToolchainTask() {
         project.plugins.all {
             when (it) {
-                is AppPlugin -> congfigureTask<AppExtension>(project)
-                is LibraryPlugin -> congfigureTask<LibraryExtension>(project)
+                is AppPlugin -> configureTask<AppExtension>(project)
+                is LibraryPlugin -> configureTask<LibraryExtension>(project)
             }
         }
     }
 
-    inline fun <reified T : BaseExtension> congfigureTask(project: Project) {
+    inline fun <reified T : BaseExtension> configureTask(project: Project) {
         val cargoExtension = project.extensions[CargoExtension::class]
         val app = project.extensions[T::class]
         val apiLevel = cargoExtension.apiLevel ?: app.defaultConfig.minSdkVersion.apiLevel
         val ndkPath = app.ndkDirectory
 
-        val targets = cargoExtension.targets
+        // It's safe to unwrap, since we bailed at configuration time if this is unset.
+        val targets = cargoExtension.targets!!
 
         toolchains
-                .filter { it.target != null }
+                .filter { it.type == ToolchainType.ANDROID }
                 .filter { (arch) -> targets.contains(arch) }
                 .forEach { (arch) ->
                      if (arch.endsWith("64") && apiLevel < 21) {
                         throw GradleException("Can't target 64-bit ${arch} with API level < 21 (${apiLevel})")
                     }
 
-                    val dir = File(project.getToolchainDirectory(), arch + "-" + apiLevel)
+                    val dir = File(cargoExtension.toolchainDirectory, arch + "-" + apiLevel)
                     if (dir.exists()) {
                         println("Toolchain for arch ${arch} version ${apiLevel} exists: checked ${dir}")
                         return@forEach
@@ -47,8 +48,9 @@ open class GenerateToolchainsTask : DefaultTask() {
                     project.exec { spec ->
                         spec.standardOutput = System.out
                         spec.errorOutput = System.out
-                        spec.commandLine("$ndkPath/build/tools/make_standalone_toolchain.py")
-                        spec.args("--arch=$arch",
+                        spec.commandLine(cargoExtension.pythonCommand)
+                        spec.args("$ndkPath/build/tools/make_standalone_toolchain.py",
+                                  "--arch=$arch",
                                   "--api=$apiLevel",
                                   "--install-dir=${dir}",
                                   "--force")

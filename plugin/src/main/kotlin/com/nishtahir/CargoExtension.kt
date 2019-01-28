@@ -1,58 +1,94 @@
 package com.nishtahir
 
+import org.gradle.api.Action
+import org.gradle.api.Project
 import org.gradle.process.ExecSpec
+import java.io.File
+import java.util.*
 
+sealed class Features {
+    class All() : Features()
+
+    data class DefaultAnd(val featureSet: Set<String>) : Features()
+
+    data class NoDefaultBut(val featureSet: Set<String>) : Features()
+}
+
+data class FeatureSpec(var features: Features? = null) {
+    fun all() {
+        this.features = Features.All()
+    }
+
+    fun defaultAnd(featureSet: Array<String>) {
+        this.features = Features.DefaultAnd(featureSet.toSet())
+    }
+
+    fun noDefaultBut(featureSet: Array<String>) {
+        this.features = Features.NoDefaultBut(featureSet.toSet())
+    }
+}
+
+// `CargoExtension` is documented in README.md.
 open class CargoExtension {
-    var module: String = ""
-    var targets: List<String> = emptyList()
+    lateinit var localProperties: Properties
 
-    /**
-     * The Android NDK API level to target.  Defaults to the minimum SDK version of the Android
-     * project's default configuration.
-     */
-    var apiLevel: Int? = null
-
-    /**
-     * The library name produced by Cargo.
-     *
-     * Right now, `libname` is used to determine the ELF SONAME to declare in the Android libraries
-     * produced by Cargo.  Different versions of the Android system linker [depend on the ELF
-     * SONAME](https://android-developers.googleblog.com/2016/06/android-changes-for-ndk-developers.html).
-     */
-    var libname: String = ""
-
-    /**
-     * The Cargo [release profile](https://doc.rust-lang.org/book/second-edition/ch14-01-release-profiles.html#customizing-builds-with-release-profiles) to build.
-     *
-     * Defaults to `"debug"`.
-     */
+    var module: String? = null
+    var libname: String? = null
+    var targets: List<String>? = null
     var profile: String = "debug"
-
-    /**
-     * The target directory into Cargo which writes built outputs.
-     *
-     * Defaults to `${module}/target`.
-     */
+    var verbose: Boolean? = null
     var targetDirectory: String? = null
-
-    /**
-     * Which Cargo built outputs to consider JNI libraries.
-     *
-     * Defaults to `["$libname.so", "$libname.dylib", "$libname.dll"]`.
-     */
     var targetIncludes: Array<String>? = null
-
-    /**
-     * Android toolchains know where to put their outputs; it's a well-known value like
-     * `armeabi-v7a` or `x86`.  The default toolchain outputs don't know where to put their output;
-     * use this to say where.
-     *
-     * Defaults to `""`.
-     */
-    var defaultToolchainBuildPrefixDir: String? = ""
+    var apiLevel: Int? = null
 
     // It would be nice to use a receiver here, but there are problems interoperating with Groovy
     // and Kotlin that are just not worth working out.  Another JVM language, yet another dynamic
     // invoke solution :(
     var exec: ((ExecSpec, Toolchain) -> Unit)? = null
+
+    var featureSpec: FeatureSpec = FeatureSpec()
+
+    fun features(action: Action<FeatureSpec>) {
+        action.execute(featureSpec)
+    }
+
+    val toolchainDirectory: File
+        get() {
+            // Share a single toolchain directory, if one is configured.  Prefer "local.properties"
+            // to "ANDROID_NDK_TOOLCHAIN_DIR" to "$TMP/rust-android-ndk-toolchains".
+            val local: String? = localProperties.getProperty("rust.androidNdkToolchainDir")
+            if (local != null) {
+                return File(local).absoluteFile
+            }
+
+            val globalDir: String? = System.getenv("ANDROID_NDK_TOOLCHAIN_DIR")
+            if (globalDir != null) {
+                return File(globalDir).absoluteFile
+            }
+
+            var defaultDir = File(System.getProperty("java.io.tmpdir"), "rust-android-ndk-toolchains")
+            return defaultDir.absoluteFile
+        }
+
+    val cargoCommand: String
+        get() {
+            return getProperty("rust.cargoCommand", "RUST_ANDROID_GRADLE_CARGO_COMMAND") ?: "cargo"
+        }
+
+    val pythonCommand: String
+        get() {
+            return getProperty("rust.pythonCommand", "RUST_ANDROID_GRADLE_PYTHON_COMMAND") ?: "python"
+        }
+
+    internal fun getProperty(camelCaseName: String, snakeCaseName: String): String? {
+        val local: String? = localProperties.getProperty(camelCaseName)
+        if (local != null) {
+            return local
+        }
+        val global: String? = System.getenv(snakeCaseName)
+        if (global != null) {
+            return global
+        }
+        return null
+    }
 }
